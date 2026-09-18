@@ -1,0 +1,28 @@
+[package]
+name = "bookkar-client"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "bookkar"
+path = "src/main.rs"
+
+[dependencies]
+bookkar-common = { path = "../bookkar-common" }
+chromiumoxide = { version = "0.7", features = ["tokio-runtime"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+jsonwebtoken = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+dialoguer = "0.11"
+console = "0.15"
+indicatif = "0.17"
+dirs = "6"
+toml = "0.8"
+futures = "0.3"
+uuid = { workspace = true }
