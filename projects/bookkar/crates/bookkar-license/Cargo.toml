@@ -1,0 +1,25 @@
+[package]
+name = "bookkar-license"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "bookkar-license"
+path = "src/main.rs"
+
+[dependencies]
+bookkar-common = { path = "../bookkar-common" }
+teloxide = { version = "0.13", default-features = false, features = ["macros", "rustls", "ctrlc_handler"] }
+axum = "0.7"
+sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "macros"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+jsonwebtoken = { workspace = true }
+tower-http = { version = "0.6", features = ["cors"] }
