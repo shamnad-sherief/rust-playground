@@ -31,17 +31,29 @@ pub async fn perform_login(page: &Page, username: &str, password: &str) -> Resul
 
     // Dismiss any initial popups/modals
     dismiss_modals(page).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Click the LOGIN button to open the login form
     info!("Opening login form...");
-    let login_trigger = page
-        .find_element("a.loginText")
-        .await;
+    let click_login_js = r#"
+        (() => {
+            const loginBtn = document.querySelector('a.loginText, a[aria-label*="Login"], button.loginText, a[aria-label="Click here to Login in application"]');
+            if (loginBtn) {
+                loginBtn.click();
+                return 'CLICKED';
+            }
+            return 'NOT_FOUND';
+        })()
+    "#;
 
-    if let Ok(trigger) = login_trigger {
-        trigger.click().await?;
-        tokio::time::sleep(Duration::from_secs(2)).await;
+    if let Ok(res) = page.evaluate(click_login_js).await {
+        if res.into_value::<String>().unwrap_or_default() != "CLICKED" {
+            if let Ok(trigger) = page.find_element("a.loginText").await {
+                let _ = trigger.click().await;
+            }
+        }
     }
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Fill username
     info!("Filling credentials...");

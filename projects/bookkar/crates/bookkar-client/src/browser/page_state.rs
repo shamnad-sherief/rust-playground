@@ -119,7 +119,11 @@ pub async fn human_type(page: &Page, selector: &str, text: &str) -> Result<()> {
 /// Click an element found by selector, waiting for it to appear first.
 pub async fn click_element(page: &Page, selector: &str) -> Result<()> {
     let element = wait_for_element(page, selector, Duration::from_secs(10)).await?;
-    element.click().await?;
+    if let Err(e) = element.click().await {
+        debug!("CDP click failed ({}), attempting JS click for {}", e, selector);
+        let js = format!("document.querySelector('{}')?.click()", selector);
+        page.evaluate(js).await?;
+    }
     debug!("Clicked element: {}", selector);
     // Brief pause after click to let Angular digest
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -154,8 +158,19 @@ pub async fn select_dropdown(page: &Page, selector: &str, value: &str) -> Result
 /// Dismiss any modal/overlay that might be blocking the page.
 pub async fn dismiss_modals(page: &Page) {
     let js = r#"
-        document.querySelectorAll('.modal .close, button.close, .cdk-overlay-backdrop')
-            .forEach(el => el.click());
+        (() => {
+            // Dismiss close icons, backdrops, and modal buttons
+            document.querySelectorAll('.modal .close, button.close, .cdk-overlay-backdrop, .ui-dialog-titlebar-close, button[aria-label="Close"]')
+                .forEach(el => { try { el.click(); } catch(e) {} });
+
+            // On IRCTC, alert dialogs have an OK button inside ui-dialog
+            document.querySelectorAll('.ui-dialog button, .modal-dialog button').forEach(b => {
+                const txt = (b.innerText || '').trim().toUpperCase();
+                if (txt === 'OK' || txt.includes('DISMISS') || txt.includes('CLOSE')) {
+                    try { b.click(); } catch(e) {}
+                }
+            });
+        })()
     "#;
     let _ = page.evaluate(js).await;
     let _ = tokio::time::sleep(Duration::from_millis(300)).await;

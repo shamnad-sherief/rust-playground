@@ -22,25 +22,66 @@ async fn main() -> Result<()> {
     // Load .env if present
     dotenvy::dotenv().ok();
 
-    // Initialize logging
+    // Parse CLI flags and environment options for automated testing
+    let args: Vec<String> = std::env::args().collect();
+    let auto_mode = args.iter().any(|a| a == "--auto" || a == "-y" || a == "--yes")
+        || std::env::var("AUTO_CONFIRM").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+
+    // Initialize logging (silence internal chromiumoxide deserialization noise)
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive("bookkar=info".parse()?)
-                .add_directive("chromiumoxide=warn".parse()?),
+                .add_directive("bookkar_client=info".parse()?)
+                .add_directive("chromiumoxide=off".parse()?),
         )
         .with_target(false)
         .init();
 
     print_banner();
 
-    // Step 1: License token validation
-    let token: String = Input::new()
-        .with_prompt("License token")
-        .interact_text()?;
-
     let license_server = std::env::var("LICENSE_SERVER")
         .unwrap_or_else(|_| LICENSE_SERVER_URL.to_string());
+
+    // Step 1: License token validation (reads env or auto-fetches dev token from license server)
+    let token: String = match std::env::var("LICENSE_TOKEN") {
+        Ok(t) if !t.trim().is_empty() => {
+            println!("  {} Using LICENSE_TOKEN from environment", style("🔑").cyan().bold());
+            t.trim().to_string()
+        }
+        _ => {
+            // Attempt auto-fetching dev token from running license server
+            let dev_url = format!("{}/api/devtoken", license_server);
+            let auto_dev = match reqwest::Client::builder()
+                .timeout(Duration::from_millis(1500))
+                .build()
+            {
+                Ok(client) => match client.get(&dev_url).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        resp.json::<serde_json::Value>()
+                            .await
+                            .ok()
+                            .and_then(|j| j.get("token").and_then(|t| t.as_str()).map(|s| s.to_string()))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+
+            if let Some(tok) = auto_dev {
+                println!(
+                    "  {} Auto-retrieved dev license token from {}",
+                    style("🔑").green().bold(),
+                    style(&license_server).cyan()
+                );
+                tok
+            } else {
+                Input::new()
+                    .with_prompt("License token")
+                    .interact_text()?
+            }
+        }
+    };
 
     match license::validate_token(&token, &license_server).await {
         Ok(claims) => {
@@ -59,15 +100,27 @@ async fn main() -> Result<()> {
 
     println!();
 
-    // Step 2: Collect IRCTC credentials
+    // Step 2: Collect IRCTC credentials (check env vars first for fast testing)
     println!("{}", style("─── IRCTC Credentials ───").cyan().bold());
-    let username: String = Input::new()
-        .with_prompt("  Username")
-        .interact_text()?;
+    let username: String = match std::env::var("IRCTC_USERNAME") {
+        Ok(u) if !u.trim().is_empty() => {
+            println!("  Username: {}", style(&u).bold());
+            u.trim().to_string()
+        }
+        _ => Input::new()
+            .with_prompt("  Username")
+            .interact_text()?,
+    };
 
-    let password: String = Password::new()
-        .with_prompt("  Password")
-        .interact()?;
+    let password: String = match std::env::var("IRCTC_PASSWORD") {
+        Ok(p) if !p.trim().is_empty() => {
+            println!("  Password: {}", style("[loaded from environment]").dim());
+            p.trim().to_string()
+        }
+        _ => Password::new()
+            .with_prompt("  Password")
+            .interact()?,
+    };
 
     println!();
 
@@ -81,11 +134,17 @@ async fn main() -> Result<()> {
             saved.to_station,
             saved.journey_date,
         );
-        let use_saved = Select::new()
-            .with_prompt("  Use saved configuration?")
-            .items(&["Yes, use saved config", "No, enter new details"])
-            .default(0)
-            .interact()?;
+
+        let use_saved = if auto_mode {
+            println!("  {} Auto-using saved configuration", style("⚡").green().bold());
+            0
+        } else {
+            Select::new()
+                .with_prompt("  Use saved configuration?")
+                .items(&["Yes, use saved config", "No, enter new details"])
+                .default(0)
+                .interact()?
+        };
 
         if use_saved == 0 {
             saved.to_booking_config(&username, &password)?
@@ -131,11 +190,16 @@ async fn main() -> Result<()> {
     );
     println!();
 
-    let proceed = Select::new()
-        .with_prompt("  Ready to launch browser and begin?")
-        .items(&["🚀 Launch!", "❌ Cancel"])
-        .default(0)
-        .interact()?;
+    let proceed = if auto_mode {
+        println!("  {} Auto-confirming launch (AUTO_CONFIRM enabled)...", style("🚀").green().bold());
+        0
+    } else {
+        Select::new()
+            .with_prompt("  Ready to launch browser and begin?")
+            .items(&["🚀 Launch!", "❌ Cancel"])
+            .default(0)
+            .interact()?
+    };
 
     if proceed != 0 {
         println!("Cancelled.");
