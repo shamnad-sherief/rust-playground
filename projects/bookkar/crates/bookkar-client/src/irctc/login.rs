@@ -76,16 +76,54 @@ pub async fn perform_login(page: &Page, username: &str, password: &str) -> Resul
 
     // Click login button
     info!("Submitting login...");
-    click_element(page, selectors::login::LOGIN_BUTTON).await?;
+    let submit_js = r#"
+        (() => {
+            const modal = document.querySelector('app-login, .modal-dialog, .modal-content, p-dialog');
+            const container = modal || document;
 
-    // Now wait for OTP
-    info!("⚠️  OTP has been sent to your phone. Please enter it in the Chrome window.");
-    info!("   Waiting for you to complete the OTP verification...");
+            // 1. Try button with text SIGN IN or LOGIN
+            const btns = container.querySelectorAll('button, input[type="submit"], a.btn');
+            for (const b of btns) {
+                const txt = (b.innerText || b.value || '').trim().toUpperCase();
+                if (txt.includes('SIGN IN') || txt.includes('SIGN-IN') || txt === 'LOGIN') {
+                    b.click();
+                    return 'CLICKED_SIGN_IN';
+                }
+            }
 
-    // Wait for login to complete — detected by the post-login page loading
-    // or the logged-in indicator appearing.
-    // We give the user up to 120 seconds to enter the OTP.
-    wait_for_login_complete(page, Duration::from_secs(120)).await?;
+            // 2. Try button[type="submit"]
+            const submitBtn = container.querySelector('button[type="submit"]');
+            if (submitBtn) {
+                submitBtn.click();
+                return 'CLICKED_SUBMIT';
+            }
+
+            // 3. Fallback
+            const anyBtn = container.querySelector('button.search_btn, button.btnDefault');
+            if (anyBtn) {
+                anyBtn.click();
+                return 'CLICKED_FALLBACK';
+            }
+
+            return 'NOT_FOUND';
+        })()
+    "#;
+
+    let clicked = page
+        .evaluate(submit_js)
+        .await
+        .ok()
+        .and_then(|v| v.into_value::<String>().ok())
+        .unwrap_or_default();
+
+    if clicked == "NOT_FOUND" {
+        // Fallback to CDP click on selector
+        let _ = click_element(page, selectors::login::LOGIN_BUTTON).await;
+    }
+
+    // Wait for login to complete (IRCTC standard login does not require OTP)
+    info!("Waiting for login confirmation...");
+    wait_for_login_complete(page, Duration::from_secs(45)).await?;
 
     info!("✅ Login successful!");
     Ok(())
@@ -113,25 +151,62 @@ async fn wait_for_captcha_solved(page: &Page) -> Result<()> {
 }
 
 /// Wait for the login process to complete by detecting page state changes.
-/// The user enters OTP manually; we just watch for the result.
+/// Standard logins complete directly without OTP. If an OTP prompt exceptionally
+/// appears, we detect it dynamically and prompt the user.
 async fn wait_for_login_complete(page: &Page, timeout: Duration) -> Result<()> {
     let start = std::time::Instant::now();
+    let mut otp_prompted = false;
 
     loop {
-        // Check if we're on the post-login page (train search with logged-in state)
+        // Check page state
         let check_js = r#"
             (() => {
-                // Check for logged-in menu element
-                const loggedIn = document.querySelector('a.logoutText, span.user-name, a.dropdown-toggle.profile');
+                // 1. Check for logged-in menu element or logout icon in header
+                const loggedIn = document.querySelector('a.logoutText, span.user-name, a.dropdown-toggle.profile, .fa-sign-out');
                 if (loggedIn) return 'LOGGED_IN';
 
-                // Check for OTP input still visible (user hasn't entered it yet)
-                const otpInput = document.querySelector('input#otp, input[type="text"][placeholder*="OTP"]');
-                if (otpInput) return 'WAITING_OTP';
+                // Check for any link or button containing "Logout"
+                const elements = document.querySelectorAll('a, button, span, strong');
+                for (const el of elements) {
+                    const txt = (el.innerText || '').trim().toUpperCase();
+                    if (txt === 'LOGOUT' || txt === 'LOG OUT' || txt.includes('LOGOUT')) {
+                        return 'LOGGED_IN';
+                    }
+                }
 
-                // Check for error messages
-                const error = document.querySelector('.alert-danger, .loginError');
-                if (error && error.innerText.trim()) return 'ERROR:' + error.innerText.trim();
+                // Check for user greeting (e.g. "Welcome <user>")
+                for (const el of elements) {
+                    const txt = (el.innerText || '').trim();
+                    if (txt.startsWith('Welcome') && txt.length > 8) {
+                        return 'LOGGED_IN';
+                    }
+                }
+
+                // Check sessionStorage for authentication tokens
+                try {
+                    if (sessionStorage.getItem('token') || sessionStorage.getItem('userName') || sessionStorage.getItem('userId')) {
+                        return 'LOGGED_IN';
+                    }
+                } catch (e) {}
+
+                // Check if login dialog/modal is closed and login button is gone from header
+                const modal = document.querySelector('app-login, .modal-dialog, p-dialog');
+                const loginBtn = document.querySelector('a.loginText');
+                if (!modal && (!loginBtn || loginBtn.offsetParent === null)) {
+                    return 'LOGGED_IN';
+                }
+
+                // 2. Check for error messages
+                const error = document.querySelector('.alert-danger, .loginError, .toast-error, .ui-messages-error');
+                if (error && error.innerText && error.innerText.trim().length > 0) {
+                    return 'ERROR:' + error.innerText.trim();
+                }
+
+                // 3. Check if an OTP input is ACTUALLY present and visible in the DOM
+                const otpInput = document.querySelector('input#otp, input[type="text"][placeholder*="OTP" i], input[formcontrolname*="otp" i]');
+                if (otpInput && otpInput.offsetParent !== null) {
+                    return 'WAITING_OTP';
+                }
 
                 return 'LOADING';
             })()
@@ -147,7 +222,10 @@ async fn wait_for_login_complete(page: &Page, timeout: Duration) -> Result<()> {
                 return Err(anyhow::anyhow!("Login failed: {}", error_msg));
             }
             "WAITING_OTP" => {
-                // Still waiting for user to enter OTP — continue polling
+                if !otp_prompted {
+                    info!("⚠️  OTP verification requested by IRCTC. Please enter the OTP in the Chrome window.");
+                    otp_prompted = true;
+                }
             }
             _ => {
                 // Loading or transitioning
@@ -156,7 +234,7 @@ async fn wait_for_login_complete(page: &Page, timeout: Duration) -> Result<()> {
 
         if start.elapsed() > timeout {
             return Err(anyhow::anyhow!(
-                "Timeout ({:?}) waiting for login to complete. Did you enter the OTP?",
+                "Timeout ({:?}) waiting for login to complete.",
                 timeout
             ));
         }
