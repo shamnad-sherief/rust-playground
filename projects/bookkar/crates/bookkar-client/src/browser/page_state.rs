@@ -182,7 +182,9 @@ pub async fn check_for_errors(page: &Page) -> Option<String> {
 /// Inject the stealth JavaScript patches into the page.
 /// Should be called after navigating to a new page but before any interaction.
 pub async fn inject_stealth(page: &Page, stealth_js: &str) -> Result<()> {
-    page.evaluate(stealth_js).await?;
-    debug!("Stealth JS injected");
+    match page.evaluate(stealth_js).await {
+        Ok(_) => debug!("Stealth JS injected"),
+        Err(e) => warn!("Warning injecting stealth JS: {}", e),
+    }
     Ok(())
 }

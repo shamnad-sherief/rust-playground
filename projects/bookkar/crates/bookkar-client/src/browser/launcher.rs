@@ -6,102 +6,113 @@ use tracing::info;
 /// JavaScript stealth patches injected before any page loads.
 /// These mask automation signals that Akamai and other bot detectors check.
 pub const STEALTH_JS: &str = r#"
-    // 1. Remove the webdriver flag that Chrome DevTools Protocol sets
-    Object.defineProperty(navigator, 'webdriver', {
-        get: () => undefined,
-    });
+    (() => {
+        // 1. Remove the webdriver flag that Chrome DevTools Protocol sets
+        try {
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined,
+            });
+        } catch (e) {}
 
-    // 2. Mock chrome.runtime to look like a real Chrome install
-    if (!window.chrome) {
-        window.chrome = {};
-    }
-    window.chrome.runtime = {};
-    window.chrome.loadTimes = function() {
-        return {
-            commitLoadTime: Date.now() / 1000,
-            connectionInfo: "h2",
-            finishDocumentLoadTime: Date.now() / 1000 + 0.1,
-            finishLoadTime: Date.now() / 1000 + 0.2,
-            firstPaintAfterLoadTime: 0,
-            firstPaintTime: Date.now() / 1000 + 0.05,
-            navigationType: "Other",
-            npnNegotiatedProtocol: "h2",
-            requestTime: Date.now() / 1000 - 0.5,
-            startLoadTime: Date.now() / 1000 - 0.3,
-            wasAlternateProtocolAvailable: false,
-            wasFetchedViaSpdy: true,
-            wasNpnNegotiated: true,
-        };
-    };
-    window.chrome.csi = function() {
-        return {
-            onloadT: Date.now(),
-            startE: Date.now() - 300,
-            pageT: 300,
-        };
-    };
+        // 2. Mock chrome.runtime to look like a real Chrome install
+        try {
+            if (!window.chrome) {
+                window.chrome = {};
+            }
+            window.chrome.runtime = {};
+            window.chrome.loadTimes = function() {
+                return {
+                    commitLoadTime: Date.now() / 1000,
+                    connectionInfo: "h2",
+                    finishDocumentLoadTime: Date.now() / 1000 + 0.1,
+                    finishLoadTime: Date.now() / 1000 + 0.2,
+                    firstPaintAfterLoadTime: 0,
+                    firstPaintTime: Date.now() / 1000 + 0.05,
+                    navigationType: "Other",
+                    npnNegotiatedProtocol: "h2",
+                    requestTime: Date.now() / 1000 - 0.5,
+                    startLoadTime: Date.now() / 1000 - 0.3,
+                    wasAlternateProtocolAvailable: false,
+                    wasFetchedViaSpdy: true,
+                    wasNpnNegotiated: true,
+                };
+            };
+            window.chrome.csi = function() {
+                return {
+                    onloadT: Date.now(),
+                    startE: Date.now() - 300,
+                    pageT: 300,
+                };
+            };
+        } catch (e) {}
 
-    // 3. Fix the permissions API (headless returns inconsistent values)
-    const originalQuery = window.navigator.permissions.query;
-    window.navigator.permissions.query = (parameters) =>
-        parameters.name === 'notifications'
-            ? Promise.resolve({ state: Notification.permission })
-            : originalQuery(parameters);
+        // 3. Fix the permissions API (headless returns inconsistent values)
+        try {
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) =>
+                parameters.name === 'notifications'
+                    ? Promise.resolve({ state: Notification.permission })
+                    : originalQuery(parameters);
+        } catch (e) {}
 
-    // 4. Mock a realistic plugin array (headless has 0 plugins)
-    Object.defineProperty(navigator, 'plugins', {
-        get: () => {
-            const plugins = [
-                { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-                { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-                { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
-            ];
-            plugins.length = 3;
-            return plugins;
-        },
-    });
+        // 4. Mock a realistic plugin array
+        try {
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [
+                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+                    { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+                ],
+            });
+        } catch (e) {}
 
-    // 5. Set realistic languages
-    Object.defineProperty(navigator, 'languages', {
-        get: () => ['en-US', 'en', 'hi'],
-    });
+        // 5. Set realistic languages
+        try {
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['en-US', 'en', 'hi'],
+            });
+        } catch (e) {}
 
-    // 6. Override WebGL vendor and renderer (headless often shows "SwiftShader")
-    const getParameterProto = WebGLRenderingContext.prototype.getParameter;
-    WebGLRenderingContext.prototype.getParameter = function(parameter) {
-        // UNMASKED_VENDOR_WEBGL
-        if (parameter === 37445) return 'Intel Inc.';
-        // UNMASKED_RENDERER_WEBGL
-        if (parameter === 37446) return 'Intel Iris OpenGL Engine';
-        return getParameterProto.call(this, parameter);
-    };
+        // 6. Override WebGL vendor and renderer
+        try {
+            const getParameterProto = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                // UNMASKED_VENDOR_WEBGL
+                if (parameter === 37445) return 'Intel Inc.';
+                // UNMASKED_RENDERER_WEBGL
+                if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+                return getParameterProto.call(this, parameter);
+            };
+        } catch (e) {}
 
-    // 7. Fix missing connection properties
-    Object.defineProperty(navigator, 'connection', {
-        get: () => ({
-            effectiveType: '4g',
-            rtt: 50,
-            downlink: 10,
-            saveData: false,
-        }),
-    });
+        // 7. Fix connection properties
+        try {
+            Object.defineProperty(navigator, 'connection', {
+                get: () => ({
+                    effectiveType: '4g',
+                    rtt: 50,
+                    downlink: 10,
+                    saveData: false,
+                }),
+            });
+        } catch (e) {}
 
-    // 8. Make hardwareConcurrency realistic
-    Object.defineProperty(navigator, 'hardwareConcurrency', {
-        get: () => 8,
-    });
+        // 8. Make hardwareConcurrency realistic
+        try {
+            Object.defineProperty(navigator, 'hardwareConcurrency', {
+                get: () => 8,
+            });
+        } catch (e) {}
 
-    // 9. Fix deviceMemory
-    Object.defineProperty(navigator, 'deviceMemory', {
-        get: () => 8,
-    });
+        // 9. Fix deviceMemory
+        try {
+            Object.defineProperty(navigator, 'deviceMemory', {
+                get: () => 8,
+            });
+        } catch (e) {}
 
-    // 10. Prevent iframe detection tricks
-    Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
-        get: function() {
-            return window;
-        },
-    });
+        return 'OK';
+    })()
 "#;
 
 /// Launch Chrome in headed mode with stealth flags.
