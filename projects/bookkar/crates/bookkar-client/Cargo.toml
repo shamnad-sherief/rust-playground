@@ -26,3 +26,4 @@ dirs = "6"
 toml = "0.8"
 futures = "0.3"
 uuid = { workspace = true }
+dotenvy = { workspace = true }

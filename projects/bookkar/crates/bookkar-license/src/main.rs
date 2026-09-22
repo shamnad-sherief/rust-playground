@@ -8,12 +8,11 @@ use anyhow::Result;
 use axum::{
     extract::State,
     http::StatusCode,
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sqlx::SqlitePool;
-use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
@@ -27,6 +26,9 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env if present
+    dotenvy::dotenv().ok();
+
     tracing_subscriber::fmt()
         .with_env_filter("bookkar_license=info,teloxide=warn")
         .with_target(false)
@@ -42,8 +44,7 @@ async fn main() -> Result<()> {
             tracing::warn!("JWT_SECRET not set! Using default (INSECURE for production)");
             "tatkal-dev-secret-change-in-production".to_string()
         });
-    let bot_token = std::env::var("TELOXIDE_TOKEN")
-        .expect("TELOXIDE_TOKEN environment variable must be set");
+    let bot_token = std::env::var("TELOXIDE_TOKEN").ok();
     let api_port: u16 = std::env::var("API_PORT")
         .unwrap_or_else(|_| "8080".to_string())
         .parse()?;
@@ -62,6 +63,7 @@ async fn main() -> Result<()> {
     let api = Router::new()
         .route("/api/validate", post(validate_token_handler))
         .route("/api/consume", post(consume_token_handler))
+        .route("/api/devtoken", get(dev_token_handler).post(dev_token_handler))
         .layer(CorsLayer::permissive())
         .with_state(api_state);
 
@@ -69,15 +71,57 @@ async fn main() -> Result<()> {
         let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", api_port))
             .await
             .expect("Failed to bind API port");
-        info!("REST API listening on port {}", api_port);
+        info!("REST API listening on http://0.0.0.0:{}", api_port);
         axum::serve(listener, api).await.expect("API server failed");
     });
 
-    // Start the Telegram bot
-    info!("Starting Telegram bot...");
-    bot::run_bot(bot_token, state).await?;
+    // Generate and display a startup dev token
+    match token::generate(0, &state.jwt_secret, &state.db, Some("DEV_STARTUP")).await {
+        Ok(dev_tok) => {
+            println!();
+            println!("============================================================");
+            println!("🎫 Ready-to-use Dev License Token:");
+            println!("{}", dev_tok);
+            println!("============================================================");
+            println!();
+        }
+        Err(e) => {
+            tracing::warn!("Failed to generate startup dev token: {}", e);
+        }
+    }
 
-    api_handle.await?;
+    let has_real_bot_token = bot_token.as_ref().map_or(false, |tok| {
+        let trimmed = tok.trim();
+        !trimmed.is_empty() && trimmed != "your_telegram_bot_token_here"
+    });
+
+    if has_real_bot_token {
+        let token = bot_token.unwrap();
+        info!("Starting Telegram bot...");
+        let bot_handle = tokio::spawn(async move {
+            if let Err(e) = bot::run_bot(token, state).await {
+                tracing::error!("Telegram bot failed: {}", e);
+            }
+        });
+
+        tokio::select! {
+            res = api_handle => {
+                if let Err(e) = res {
+                    tracing::error!("API server error: {}", e);
+                }
+            }
+            res = bot_handle => {
+                if let Err(e) = res {
+                    tracing::error!("Bot error: {}", e);
+                }
+            }
+        }
+    } else {
+        info!("TELOXIDE_TOKEN not set or placeholder. Running in local dev mode (Telegram bot disabled).");
+        info!("REST API is ready to validate tokens on http://localhost:{}", api_port);
+        api_handle.await?;
+    }
+
     Ok(())
 }
 
@@ -125,3 +169,16 @@ async fn consume_token_handler(
         ),
     }
 }
+
+async fn dev_token_handler(
+    State(state): State<Arc<AppState>>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match token::generate(0, &state.jwt_secret, &state.db, Some("DEV_API")).await {
+        Ok(tok) => (StatusCode::OK, Json(serde_json::json!({ "token": tok }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+

@@ -64,7 +64,7 @@ Use `/help` to see all commands\."#;
     Ok(())
 }
 
-async fn handle_buy(bot: Bot, msg: Message, state: Arc<AppState>) -> ResponseResult<()> {
+async fn handle_buy(bot: Bot, msg: Message, _state: Arc<AppState>) -> ResponseResult<()> {
     let upi_id = std::env::var("PAYMENT_UPI_ID")
         .unwrap_or_else(|_| "tatkal@upi".to_string());
 

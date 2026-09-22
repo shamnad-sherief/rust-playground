@@ -117,6 +117,7 @@ pub async fn get_user_tokens(pool: &SqlitePool, telegram_id: i64) -> Result<Vec<
 }
 
 #[derive(Debug, sqlx::FromRow)]
+#[allow(dead_code)]
 pub struct TokenRecord {
     pub id: String,
     pub telegram_id: i64,
