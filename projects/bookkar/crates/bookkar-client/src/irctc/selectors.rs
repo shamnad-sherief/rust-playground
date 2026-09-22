@@ -13,9 +13,9 @@ pub mod login {
     /// The main login submit button
     pub const LOGIN_BUTTON: &str = "button[type='submit']";
     /// CAPTCHA image element (may not always be present)
-    pub const CAPTCHA_IMAGE: &str = "img.captcha-img";
+    pub const CAPTCHA_IMAGE: &str = "img.captcha-img, img[src*='captcha'], .captcha-img, app-captcha";
     /// CAPTCHA text input
-    pub const CAPTCHA_INPUT: &str = "input#nlpAnswer";
+    pub const CAPTCHA_INPUT: &str = "input[formcontrolname='captcha'], input#captcha, input#nlpAnswer, input[placeholder*='captcha' i]";
     /// OTP input field (appears after login submit)
     pub const OTP_INPUT: &str = "input#otp";
     /// OTP submit button

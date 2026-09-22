@@ -140,6 +140,36 @@ pub async fn human_type(page: &Page, selector: &str, text: &str) -> Result<()> {
     page.evaluate(clear_js).await?;
     // Type each character
     element.type_str(text).await?;
+
+    // Ensure Angular FormControl model is fully synced with the typed value
+    let sync_js = format!(
+        r#"
+        (() => {{
+            const el = document.querySelector({});
+            if (el) {{
+                if (el.value !== {}) {{
+                    const nativeSetter = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value'
+                    )?.set;
+                    if (nativeSetter) {{
+                        nativeSetter.call(el, {});
+                    }} else {{
+                        el.value = {};
+                    }}
+                }}
+                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                el.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+            }}
+        }})()
+        "#,
+        js_quote(selector),
+        js_quote(text),
+        js_quote(text),
+        js_quote(text),
+    );
+    let _ = page.evaluate(sync_js).await;
+
     Ok(())
 }
 
