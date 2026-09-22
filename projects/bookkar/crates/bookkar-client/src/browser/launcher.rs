@@ -112,7 +112,7 @@ pub const STEALTH_JS: &str = r#"
 pub async fn launch_stealth_browser() -> Result<(Browser, tokio::task::JoinHandle<()>)> {
     info!("Launching Chrome in headed (visible) mode with stealth flags...");
 
-    let config = BrowserConfig::builder()
+    let mut builder = BrowserConfig::builder()
         .with_head() // VISIBLE browser window
         .window_size(1366, 768)
         .arg("--disable-blink-features=AutomationControlled")
@@ -126,9 +126,27 @@ pub async fn launch_stealth_browser() -> Result<(Browser, tokio::task::JoinHandl
         .arg("--disable-ipc-flooding-protection")
         .arg("--disable-dev-shm-usage")
         .arg("--no-sandbox")
-        .arg("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.6533.100 Safari/537.36")
-        .build()
-        .map_err(|e| anyhow::anyhow!("Failed to build browser config: {}", e))?;
+        .arg("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.6533.100 Safari/537.36");
+
+    if let Ok(chrome_path) = std::env::var("CHROME_BIN").or_else(|_| std::env::var("CHROME_PATH")) {
+        let trimmed = chrome_path.trim();
+        if !trimmed.is_empty() {
+            info!("Using custom Chrome binary: {}", trimmed);
+            builder = builder.chrome_executable(trimmed);
+        }
+    }
+
+    let config = builder.build().map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to find Chrome or Chromium executable.\n\
+             Please install Chrome or Chromium:\n\
+               - Chromium: sudo apt install chromium\n\
+               - Google Chrome: https://www.google.com/chrome/\n\
+             Or specify the binary path using CHROME_BIN=/path/to/chrome in .env.\n\
+             (Underlying error: {})",
+            e
+        )
+    })?;
 
     let (browser, mut handler) = Browser::launch(config).await?;
 
