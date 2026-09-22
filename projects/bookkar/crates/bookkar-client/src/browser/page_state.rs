@@ -1,7 +1,6 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-use chromiumoxide::cdp::browser_protocol::dom::*;
 use chromiumoxide::{Element, Page};
 use tracing::{debug, warn};
 
@@ -88,6 +87,14 @@ pub async fn wait_for_element_removed(
     }
 }
 
+/// Quote and escape a string so it can be safely embedded as a JavaScript string literal.
+pub fn js_quote(s: &str) -> String {
+    serde_json::to_string(s).unwrap_or_else(|_| {
+        let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("\"{}\"", escaped)
+    })
+}
+
 /// Execute JavaScript in the page context and return the result as a string.
 pub async fn eval_js(page: &Page, expression: &str) -> Result<String> {
     let result = page
@@ -101,16 +108,36 @@ pub async fn eval_js(page: &Page, expression: &str) -> Result<String> {
 /// simulating human typing behaviour (helps avoid keystroke analysis detection).
 pub async fn human_type(page: &Page, selector: &str, text: &str) -> Result<()> {
     let element = wait_for_element(page, selector, Duration::from_secs(10)).await?;
-    // Click to focus
-    element.click().await?;
+    // Click to focus (fallback to JS focus if CDP click fails)
+    if let Err(e) = element.click().await {
+        debug!("CDP click failed in human_type ({}), trying JS focus for {}", e, selector);
+        let focus_js = format!("document.querySelector({})?.focus()", js_quote(selector));
+        let _ = page.evaluate(focus_js).await;
+    }
     // Small delay after focus
     tokio::time::sleep(Duration::from_millis(100)).await;
-    // Clear existing content
-    page.evaluate(format!(
-        "document.querySelector('{}').value = ''",
-        selector
-    ))
-    .await?;
+    // Clear existing content safely with Angular event dispatch
+    let clear_js = format!(
+        r#"
+        (() => {{
+            const el = document.querySelector({});
+            if (el) {{
+                const nativeSetter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype, 'value'
+                )?.set;
+                if (nativeSetter) {{
+                    nativeSetter.call(el, '');
+                }} else {{
+                    el.value = '';
+                }}
+                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+            }}
+        }})()
+        "#,
+        js_quote(selector)
+    );
+    page.evaluate(clear_js).await?;
     // Type each character
     element.type_str(text).await?;
     Ok(())
@@ -121,7 +148,7 @@ pub async fn click_element(page: &Page, selector: &str) -> Result<()> {
     let element = wait_for_element(page, selector, Duration::from_secs(10)).await?;
     if let Err(e) = element.click().await {
         debug!("CDP click failed ({}), attempting JS click for {}", e, selector);
-        let js = format!("document.querySelector('{}')?.click()", selector);
+        let js = format!("document.querySelector({})?.click()", js_quote(selector));
         page.evaluate(js).await?;
     }
     debug!("Clicked element: {}", selector);
@@ -135,14 +162,15 @@ pub async fn select_dropdown(page: &Page, selector: &str, value: &str) -> Result
     let js = format!(
         r#"
         (() => {{
-            const el = document.querySelector('{}');
+            const el = document.querySelector({});
             if (!el) return 'NOT_FOUND';
-            el.value = '{}';
+            el.value = {};
             el.dispatchEvent(new Event('change', {{ bubbles: true }}));
             return 'OK';
         }})()
         "#,
-        selector, value
+        js_quote(selector),
+        js_quote(value)
     );
 
     let result = eval_js(page, &js).await?;

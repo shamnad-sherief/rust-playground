@@ -80,11 +80,11 @@ pub mod booking {
 
 pub mod payment {
     /// UPI payment radio button / option
-    pub const UPI_OPTION: &str = "div.bank-type span:has-text('UPI')";
+    pub const UPI_OPTION: &str = "div.bank-type";
     /// UPI fallback — often a specific bank type container
     pub const UPI_OPTION_ALT: &str = "div[class*='upi']";
     /// eWallet payment option
-    pub const EWALLET_OPTION: &str = "div.bank-type span:has-text('IRCTC eWallet')";
+    pub const EWALLET_OPTION: &str = "div.bank-type";
     /// UPI VPA (Virtual Payment Address) input
     pub const UPI_VPA_INPUT: &str = "input[formcontrolname='vpa']";
     /// Pay / submit payment button

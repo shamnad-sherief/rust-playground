@@ -5,7 +5,7 @@ use chromiumoxide::Page;
 use bookkar_common::{BookingResult, PaymentMethod};
 use tracing::{info, warn};
 
-use crate::browser::page_state::{click_element, eval_js, human_type, wait_for_element};
+use crate::browser::page_state::{eval_js, js_quote};
 use crate::irctc::selectors;
 
 /// Handle the payment step of the booking flow.
@@ -55,7 +55,7 @@ pub async fn process_payment(page: &Page, payment: &PaymentMethod) -> Result<()>
                 r#"
                 (() => {{
                     // Try the standard VPA input
-                    let input = document.querySelector('{}');
+                    let input = document.querySelector({});
                     // Fallback: try any input with placeholder containing 'upi' or 'vpa'
                     if (!input) {{
                         input = document.querySelector('input[placeholder*="UPI"], input[placeholder*="VPA"], input[placeholder*="upi"]');
@@ -63,8 +63,12 @@ pub async fn process_payment(page: &Page, payment: &PaymentMethod) -> Result<()>
                     if (input) {{
                         const nativeSetter = Object.getOwnPropertyDescriptor(
                             window.HTMLInputElement.prototype, 'value'
-                        ).set;
-                        nativeSetter.call(input, '{}');
+                        )?.set;
+                        if (nativeSetter) {{
+                            nativeSetter.call(input, {});
+                        }} else {{
+                            input.value = {};
+                        }}
                         input.dispatchEvent(new Event('input', {{ bubbles: true }}));
                         input.dispatchEvent(new Event('change', {{ bubbles: true }}));
                         return 'OK';
@@ -72,8 +76,9 @@ pub async fn process_payment(page: &Page, payment: &PaymentMethod) -> Result<()>
                     return 'NOT_FOUND';
                 }})()
                 "#,
-                selectors::payment::UPI_VPA_INPUT,
-                vpa,
+                js_quote(selectors::payment::UPI_VPA_INPUT),
+                js_quote(vpa),
+                js_quote(vpa),
             );
 
             let result = eval_js(page, &vpa_js).await?;
@@ -113,7 +118,7 @@ pub async fn process_payment(page: &Page, payment: &PaymentMethod) -> Result<()>
     let pay_js = format!(
         r#"
         (() => {{
-            let btn = document.querySelector('{}');
+            let btn = document.querySelector({});
             if (!btn) {{
                 // Fallback: try any submit-like button in the payment section
                 btn = document.querySelector('button[type="submit"], button.btn-primary.pay, input[type="submit"]');
@@ -125,7 +130,7 @@ pub async fn process_payment(page: &Page, payment: &PaymentMethod) -> Result<()>
             return 'NOT_FOUND';
         }})()
         "#,
-        selectors::payment::PAY_BUTTON,
+        js_quote(selectors::payment::PAY_BUTTON),
     );
 
     let result = eval_js(page, &pay_js).await?;
@@ -147,7 +152,7 @@ pub async fn wait_for_confirmation(page: &Page, timeout: Duration) -> Result<Boo
         let check_js = r#"
             (() => {
                 // Check for PNR on the confirmation page
-                const pnrEl = document.querySelector('.pnr-val, .pnr-number, td:has(+ td:contains("PNR"))');
+                const pnrEl = document.querySelector('.pnr-val, .pnr-number');
                 if (pnrEl) {
                     return 'PNR:' + pnrEl.innerText.trim();
                 }

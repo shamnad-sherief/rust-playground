@@ -3,11 +3,9 @@ use std::time::Duration;
 use anyhow::Result;
 use chromiumoxide::Page;
 use bookkar_common::Passenger;
-use tracing::{info, warn};
+use tracing::info;
 
-use crate::browser::page_state::{
-    click_element, eval_js, human_type, select_dropdown, wait_for_element,
-};
+use crate::browser::page_state::{click_element, eval_js, js_quote, wait_for_element};
 use crate::irctc::selectors;
 
 /// Fill passenger details in the booking form.
@@ -51,8 +49,8 @@ pub async fn fill_passengers(
         let checked = eval_js(
             page,
             &format!(
-                "document.querySelector('{}')?.checked || false",
-                selectors::booking::AUTO_UPGRADE_CHECKBOX
+                "document.querySelector({})?.checked || false",
+                js_quote(selectors::booking::AUTO_UPGRADE_CHECKBOX)
             ),
         )
         .await?;
@@ -76,20 +74,25 @@ async fn fill_single_passenger(page: &Page, index: usize, passenger: &Passenger)
     let name_js = format!(
         r#"
         (() => {{
-            const inputs = document.querySelectorAll('{}');
+            const inputs = document.querySelectorAll({});
             if (inputs[{index}]) {{
                 const nativeSetter = Object.getOwnPropertyDescriptor(
                     window.HTMLInputElement.prototype, 'value'
-                ).set;
-                nativeSetter.call(inputs[{index}], '{}');
+                )?.set;
+                if (nativeSetter) {{
+                    nativeSetter.call(inputs[{index}], {});
+                }} else {{
+                    inputs[{index}].value = {};
+                }}
                 inputs[{index}].dispatchEvent(new Event('input', {{ bubbles: true }}));
                 return 'OK';
             }}
             return 'NOT_FOUND';
         }})()
         "#,
-        selectors::booking::PASSENGER_NAME,
-        passenger.name,
+        js_quote(selectors::booking::PASSENGER_NAME),
+        js_quote(&passenger.name),
+        js_quote(&passenger.name),
         index = index,
     );
     eval_js(page, &name_js).await?;
@@ -97,20 +100,25 @@ async fn fill_single_passenger(page: &Page, index: usize, passenger: &Passenger)
     let age_js = format!(
         r#"
         (() => {{
-            const inputs = document.querySelectorAll('{}');
+            const inputs = document.querySelectorAll({});
             if (inputs[{index}]) {{
                 const nativeSetter = Object.getOwnPropertyDescriptor(
                     window.HTMLInputElement.prototype, 'value'
-                ).set;
-                nativeSetter.call(inputs[{index}], '{}');
+                )?.set;
+                if (nativeSetter) {{
+                    nativeSetter.call(inputs[{index}], {});
+                }} else {{
+                    inputs[{index}].value = {};
+                }}
                 inputs[{index}].dispatchEvent(new Event('input', {{ bubbles: true }}));
                 return 'OK';
             }}
             return 'NOT_FOUND';
         }})()
         "#,
-        selectors::booking::PASSENGER_AGE,
-        passenger.age,
+        js_quote(selectors::booking::PASSENGER_AGE),
+        js_quote(&passenger.age.to_string()),
+        js_quote(&passenger.age.to_string()),
         index = index,
     );
     eval_js(page, &age_js).await?;
@@ -119,17 +127,17 @@ async fn fill_single_passenger(page: &Page, index: usize, passenger: &Passenger)
     let gender_js = format!(
         r#"
         (() => {{
-            const selects = document.querySelectorAll('{}');
+            const selects = document.querySelectorAll({});
             if (selects[{index}]) {{
-                selects[{index}].value = '{}';
+                selects[{index}].value = {};
                 selects[{index}].dispatchEvent(new Event('change', {{ bubbles: true }}));
                 return 'OK';
             }}
             return 'NOT_FOUND';
         }})()
         "#,
-        selectors::booking::PASSENGER_GENDER,
-        passenger.gender.irctc_value(),
+        js_quote(selectors::booking::PASSENGER_GENDER),
+        js_quote(passenger.gender.irctc_value()),
         index = index,
     );
     eval_js(page, &gender_js).await?;
@@ -138,17 +146,17 @@ async fn fill_single_passenger(page: &Page, index: usize, passenger: &Passenger)
     let berth_js = format!(
         r#"
         (() => {{
-            const selects = document.querySelectorAll('{}');
+            const selects = document.querySelectorAll({});
             if (selects[{index}]) {{
-                selects[{index}].value = '{}';
+                selects[{index}].value = {};
                 selects[{index}].dispatchEvent(new Event('change', {{ bubbles: true }}));
                 return 'OK';
             }}
             return 'NOT_FOUND';
         }})()
         "#,
-        selectors::booking::BERTH_PREFERENCE,
-        passenger.berth_preference.irctc_value(),
+        js_quote(selectors::booking::BERTH_PREFERENCE),
+        js_quote(passenger.berth_preference.irctc_value()),
         index = index,
     );
     eval_js(page, &berth_js).await?;

@@ -6,7 +6,7 @@ use bookkar_common::{Quota, TrainClass};
 use tracing::{debug, info};
 
 use crate::browser::page_state::{
-    click_element, eval_js, select_dropdown, wait_for_element,
+    click_element, eval_js, js_quote, select_dropdown, wait_for_element,
 };
 use crate::irctc::selectors;
 
@@ -37,13 +37,17 @@ pub async fn fill_search_form(
     let date_js = format!(
         r#"
         (() => {{
-            const input = document.querySelector('{}');
+            const input = document.querySelector({});
             if (!input) return 'NOT_FOUND';
             // Clear and set the date via Angular's model
             const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
                 window.HTMLInputElement.prototype, 'value'
-            ).set;
-            nativeInputValueSetter.call(input, '{}');
+            )?.set;
+            if (nativeInputValueSetter) {{
+                nativeInputValueSetter.call(input, {});
+            }} else {{
+                input.value = {};
+            }}
             input.dispatchEvent(new Event('input', {{ bubbles: true }}));
             input.dispatchEvent(new Event('change', {{ bubbles: true }}));
             // Close any date picker that opened
@@ -51,8 +55,9 @@ pub async fn fill_search_form(
             return 'OK';
         }})()
         "#,
-        selectors::search::DATE_INPUT,
-        date
+        js_quote(selectors::search::DATE_INPUT),
+        js_quote(date),
+        js_quote(date)
     );
     eval_js(page, &date_js).await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -82,8 +87,16 @@ async fn fill_station(page: &Page, selector: &str, station_code: &str) -> Result
 
     // Clear existing text and type the station code
     let clear_js = format!(
-        "document.querySelector('{}').value = ''",
-        selector
+        r#"
+        (() => {{
+            const el = document.querySelector({});
+            if (el) {{
+                el.value = '';
+                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            }}
+        }})()
+        "#,
+        js_quote(selector)
     );
     eval_js(page, &clear_js).await?;
 
@@ -96,7 +109,7 @@ async fn fill_station(page: &Page, selector: &str, station_code: &str) -> Result
     let select_js = format!(
         r#"
         (() => {{
-            const items = document.querySelectorAll('{}');
+            const items = document.querySelectorAll({});
             if (items.length > 0) {{
                 items[0].click();
                 return 'SELECTED';
@@ -110,7 +123,7 @@ async fn fill_station(page: &Page, selector: &str, station_code: &str) -> Result
             return 'NO_SUGGESTIONS';
         }})()
         "#,
-        selectors::search::AUTOCOMPLETE_OPTION
+        js_quote(selectors::search::AUTOCOMPLETE_OPTION)
     );
 
     let result = eval_js(page, &select_js).await?;
@@ -140,8 +153,8 @@ pub async fn wait_for_results(page: &Page, timeout: Duration) -> Result<u32> {
 
     loop {
         let count_js = format!(
-            "document.querySelectorAll('{}').length",
-            selectors::search::TRAIN_ROW
+            "document.querySelectorAll({}).length",
+            js_quote(selectors::search::TRAIN_ROW)
         );
 
         let result = page.evaluate(count_js.as_str()).await?;
@@ -182,12 +195,12 @@ pub async fn select_train(page: &Page, train_number: Option<&str>) -> Result<Str
             let select_js = format!(
                 r#"
                 (() => {{
-                    const rows = document.querySelectorAll('{}');
+                    const rows = document.querySelectorAll({});
                     for (const row of rows) {{
-                        const heading = row.querySelector('{}');
-                        if (heading && heading.innerText.includes('{}')) {{
+                        const heading = row.querySelector({});
+                        if (heading && heading.innerText.includes({})) {{
                             // Click the availability link for this train
-                            const avail = row.querySelector('{}');
+                            const avail = row.querySelector({});
                             if (avail) {{
                                 avail.click();
                                 return heading.innerText.trim();
@@ -197,10 +210,10 @@ pub async fn select_train(page: &Page, train_number: Option<&str>) -> Result<Str
                     return 'NOT_FOUND';
                 }})()
                 "#,
-                selectors::search::TRAIN_ROW,
-                selectors::search::TRAIN_NUMBER,
-                number,
-                selectors::search::AVAILABILITY_LINK,
+                js_quote(selectors::search::TRAIN_ROW),
+                js_quote(selectors::search::TRAIN_NUMBER),
+                js_quote(number),
+                js_quote(selectors::search::AVAILABILITY_LINK),
             );
 
             let result = eval_js(page, &select_js).await?;
@@ -220,18 +233,18 @@ pub async fn select_train(page: &Page, train_number: Option<&str>) -> Result<Str
             let select_js = format!(
                 r#"
                 (() => {{
-                    const rows = document.querySelectorAll('{}');
+                    const rows = document.querySelectorAll({});
                     if (rows.length === 0) return 'NONE';
                     const first = rows[0];
-                    const heading = first.querySelector('{}');
-                    const avail = first.querySelector('{}');
+                    const heading = first.querySelector({});
+                    const avail = first.querySelector({});
                     if (avail) avail.click();
                     return heading ? heading.innerText.trim() : 'UNKNOWN';
                 }})()
                 "#,
-                selectors::search::TRAIN_ROW,
-                selectors::search::TRAIN_NUMBER,
-                selectors::search::AVAILABILITY_LINK,
+                js_quote(selectors::search::TRAIN_ROW),
+                js_quote(selectors::search::TRAIN_NUMBER),
+                js_quote(selectors::search::AVAILABILITY_LINK),
             );
 
             let result = eval_js(page, &select_js).await?;

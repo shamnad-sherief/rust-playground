@@ -10,7 +10,6 @@ use anyhow::Result;
 use chrono::NaiveDate;
 use console::style;
 use dialoguer::{Input, Password, Select};
-use tracing::info;
 
 use bookkar_common::TrainClass;
 

@@ -6,8 +6,7 @@ use tracing::{info, warn};
 
 use crate::browser::launcher::STEALTH_JS;
 use crate::browser::page_state::{
-    click_element, dismiss_modals, human_type, inject_stealth, wait_for_element,
-    wait_for_url_contains,
+    click_element, dismiss_modals, human_type, inject_stealth, js_quote,
 };
 use crate::irctc::selectors;
 
@@ -97,8 +96,8 @@ async fn wait_for_captcha_solved(page: &Page) -> Result<()> {
     let start = std::time::Instant::now();
     loop {
         let js = format!(
-            "document.querySelector('{}')?.value?.length > 0",
-            selectors::login::CAPTCHA_INPUT
+            "document.querySelector({})?.value?.length > 0",
+            js_quote(selectors::login::CAPTCHA_INPUT)
         );
         let result = page.evaluate(js).await?;
         if result.into_value::<bool>().unwrap_or(false) {
