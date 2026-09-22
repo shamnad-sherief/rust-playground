@@ -10,19 +10,21 @@ use crate::browser::page_state::{
 };
 use crate::irctc::selectors;
 
-const IRCTC_BASE_URL: &str = "https://www.irctc.co.in/nget/train-search";
-const IRCTC_LOGIN_URL: &str = "https://www.irctc.co.in/nget/train-search";
+pub fn get_irctc_base_url() -> String {
+    std::env::var("IRCTC_URL")
+        .or_else(|_| std::env::var("IRCTC_BASE_URL"))
+        .unwrap_or_else(|_| "https://www.irctc.co.in/eticket/train-search".to_string())
+}
 
 /// Navigate to IRCTC and perform login.
 ///
 /// This function fills in the username and password, submits the form,
-/// and then waits for the user to manually enter the OTP in the browser.
-/// It detects login completion by watching for the post-login URL or
-/// the appearance of the logged-in indicator element.
+/// and detects login completion by watching for the post-login state.
 pub async fn perform_login(page: &Page, username: &str, password: &str) -> Result<()> {
+    let base_url = get_irctc_base_url();
     // Navigate to IRCTC
-    info!("Navigating to IRCTC...");
-    page.goto(IRCTC_BASE_URL).await?;
+    info!("Navigating to IRCTC ({base_url})...");
+    page.goto(&base_url).await?;
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     // Inject stealth patches

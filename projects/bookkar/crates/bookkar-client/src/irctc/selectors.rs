@@ -23,7 +23,7 @@ pub mod login {
     /// Element that indicates successful login (e.g., user menu)
     pub const LOGGED_IN_INDICATOR: &str = "a.loginText";
     /// Login page URL fragment
-    pub const LOGIN_URL: &str = "/nget/train-search";
+    pub const LOGIN_URL: &str = "/eticket/train-search";
 }
 
 pub mod search {
