@@ -3,9 +3,17 @@ name = "bookkar-client"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "bookkar_client"
+path = "src/lib.rs"
+
 [[bin]]
 name = "bookkar"
 path = "src/main.rs"
+
+[[bin]]
+name = "inspect_dom"
+path = "src/bin/inspect_dom.rs"
 
 [dependencies]
 bookkar-common = { path = "../bookkar-common" }

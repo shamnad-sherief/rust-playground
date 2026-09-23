@@ -9,44 +9,16 @@ pub const STEALTH_JS: &str = r#"
     (() => {
         // 1. Remove the webdriver flag that Chrome DevTools Protocol sets
         try {
+            const newProto = navigator.__proto__;
+            delete newProto.webdriver;
+        } catch (e) {}
+        try {
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => undefined,
             });
         } catch (e) {}
 
-        // 2. Mock chrome.runtime to look like a real Chrome install
-        try {
-            if (!window.chrome) {
-                window.chrome = {};
-            }
-            window.chrome.runtime = {};
-            window.chrome.loadTimes = function() {
-                return {
-                    commitLoadTime: Date.now() / 1000,
-                    connectionInfo: "h2",
-                    finishDocumentLoadTime: Date.now() / 1000 + 0.1,
-                    finishLoadTime: Date.now() / 1000 + 0.2,
-                    firstPaintAfterLoadTime: 0,
-                    firstPaintTime: Date.now() / 1000 + 0.05,
-                    navigationType: "Other",
-                    npnNegotiatedProtocol: "h2",
-                    requestTime: Date.now() / 1000 - 0.5,
-                    startLoadTime: Date.now() / 1000 - 0.3,
-                    wasAlternateProtocolAvailable: false,
-                    wasFetchedViaSpdy: true,
-                    wasNpnNegotiated: true,
-                };
-            };
-            window.chrome.csi = function() {
-                return {
-                    onloadT: Date.now(),
-                    startE: Date.now() - 300,
-                    pageT: 300,
-                };
-            };
-        } catch (e) {}
-
-        // 3. Fix the permissions API (headless returns inconsistent values)
+        // 2. Fix the permissions API (headless returns inconsistent values)
         try {
             const originalQuery = window.navigator.permissions.query;
             window.navigator.permissions.query = (parameters) =>
@@ -55,59 +27,10 @@ pub const STEALTH_JS: &str = r#"
                     : originalQuery(parameters);
         } catch (e) {}
 
-        // 4. Mock a realistic plugin array
-        try {
-            Object.defineProperty(navigator, 'plugins', {
-                get: () => [
-                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-                    { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
-                ],
-            });
-        } catch (e) {}
-
-        // 5. Set realistic languages
+        // 3. Set realistic languages
         try {
             Object.defineProperty(navigator, 'languages', {
                 get: () => ['en-US', 'en', 'hi'],
-            });
-        } catch (e) {}
-
-        // 6. Override WebGL vendor and renderer
-        try {
-            const getParameterProto = WebGLRenderingContext.prototype.getParameter;
-            WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                // UNMASKED_VENDOR_WEBGL
-                if (parameter === 37445) return 'Intel Inc.';
-                // UNMASKED_RENDERER_WEBGL
-                if (parameter === 37446) return 'Intel Iris OpenGL Engine';
-                return getParameterProto.call(this, parameter);
-            };
-        } catch (e) {}
-
-        // 7. Fix connection properties
-        try {
-            Object.defineProperty(navigator, 'connection', {
-                get: () => ({
-                    effectiveType: '4g',
-                    rtt: 50,
-                    downlink: 10,
-                    saveData: false,
-                }),
-            });
-        } catch (e) {}
-
-        // 8. Make hardwareConcurrency realistic
-        try {
-            Object.defineProperty(navigator, 'hardwareConcurrency', {
-                get: () => 8,
-            });
-        } catch (e) {}
-
-        // 9. Fix deviceMemory
-        try {
-            Object.defineProperty(navigator, 'deviceMemory', {
-                get: () => 8,
             });
         } catch (e) {}
 
@@ -137,7 +60,7 @@ pub async fn launch_stealth_browser() -> Result<(Browser, tokio::task::JoinHandl
         .arg("--disable-ipc-flooding-protection")
         .arg("--disable-dev-shm-usage")
         .arg("--no-sandbox")
-        .arg("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.6533.100 Safari/537.36");
+        .arg("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36");
 
     if let Ok(chrome_path) = std::env::var("CHROME_BIN").or_else(|_| std::env::var("CHROME_PATH")) {
         let trimmed = chrome_path.trim();

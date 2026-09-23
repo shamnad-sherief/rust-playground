@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use chromiumoxide::Page;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::browser::launcher::STEALTH_JS;
 use crate::browser::page_state::{
@@ -38,7 +38,7 @@ pub async fn perform_login(page: &Page, username: &str, password: &str) -> Resul
     info!("Opening login form...");
     let click_login_js = r#"
         (() => {
-            const loginBtn = document.querySelector('a.loginText, a[aria-label*="Login"], button.loginText, a[aria-label="Click here to Login in application"]');
+            const loginBtn = document.querySelector('button.btn-login, a.loginText, button[aria-label*="Login"], a[aria-label*="Login"], a[aria-label="Click here to Login in application"]');
             if (loginBtn) {
                 loginBtn.click();
                 return 'CLICKED';
@@ -49,7 +49,7 @@ pub async fn perform_login(page: &Page, username: &str, password: &str) -> Resul
 
     if let Ok(res) = page.evaluate(click_login_js).await {
         if res.into_value::<String>().unwrap_or_default() != "CLICKED" {
-            if let Ok(trigger) = page.find_element("a.loginText").await {
+            if let Ok(trigger) = page.find_element(selectors::login::LOGIN_TRIGGER).await {
                 let _ = trigger.click().await;
             }
         }
@@ -63,6 +63,26 @@ pub async fn perform_login(page: &Page, username: &str, password: &str) -> Resul
 
     // Fill password
     human_type(page, selectors::login::PASSWORD_INPUT, password).await?;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Trigger Angular form control change/blur events so submit button activates
+    let trigger_validation_js = r#"
+        (() => {
+            const u = document.querySelector('input#username, input[formcontrolname="userid"]');
+            const p = document.querySelector('input#password, input[formcontrolname="password"]');
+            if (u) {
+                u.dispatchEvent(new Event('input', { bubbles: true }));
+                u.dispatchEvent(new Event('change', { bubbles: true }));
+                u.dispatchEvent(new Event('blur', { bubbles: true }));
+            }
+            if (p) {
+                p.dispatchEvent(new Event('input', { bubbles: true }));
+                p.dispatchEvent(new Event('change', { bubbles: true }));
+                p.dispatchEvent(new Event('blur', { bubbles: true }));
+            }
+        })()
+    "#;
+    let _ = page.evaluate(trigger_validation_js).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Check for CAPTCHA
@@ -97,59 +117,84 @@ pub async fn perform_login(page: &Page, username: &str, password: &str) -> Resul
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
+    // Natural pause before submitting to avoid bot velocity detection
+    tokio::time::sleep(Duration::from_millis(800)).await;
+
     // Click login button
     info!("Submitting login...");
-    let submit_js = r#"
-        (() => {
-            const modal = document.querySelector('app-login, .modal-dialog, .modal-content, p-dialog, .login-modal');
-            const container = modal || document;
 
-            // 1. Specifically look for button with text SIGN IN
-            const allButtons = Array.from(container.querySelectorAll('button, input[type="submit"]'));
-            let targetBtn = allButtons.find(b => {
-                const t = (b.innerText || b.value || '').trim().toUpperCase();
-                return t === 'SIGN IN' || t === 'SIGN-IN' || t === 'SIGNIN';
-            });
-
-            // 2. Look for button[type="submit"] inside the form
-            if (!targetBtn) {
-                targetBtn = container.querySelector('form button[type="submit"], form button.search_btn, form button.btnDefault');
-            }
-
-            // 3. Fallback inside modal
-            if (!targetBtn && modal) {
-                targetBtn = Array.from(modal.querySelectorAll('button')).find(b => {
-                    const t = (b.innerText || '').trim().toUpperCase();
-                    return t.includes('SIGN') || t.includes('SUBMIT');
-                });
-            }
-
-            if (!targetBtn) {
-                return 'NOT_FOUND: ' + allButtons.map(b => b.innerText.trim()).join(', ');
-            }
-
-            if (targetBtn.disabled) {
-                targetBtn.disabled = false;
-                targetBtn.removeAttribute('disabled');
-            }
-
-            targetBtn.click();
-            return 'CLICKED: ' + targetBtn.innerText.trim();
-        })()
-    "#;
-
-    let clicked_result = page
-        .evaluate(submit_js)
+    // First attempt: real CDP click on the active login button inside the dialog
+    let cdp_click_res = match page
+        .find_element(
+            ".login-dialog button.btn-action.btn-login, button.btn-action.btn-login.active, .login-dialog button[type='submit']",
+        )
         .await
-        .ok()
-        .and_then(|v| v.into_value::<String>().ok())
-        .unwrap_or_else(|| "ERROR".to_string());
+    {
+        Ok(el) => match el.click().await {
+            Ok(_) => {
+                info!("Login submit action: CDP_CLICKED_BUTTON");
+                true
+            }
+            Err(e) => {
+                debug!("CDP click on login button failed ({}), trying JS click", e);
+                false
+            }
+        },
+        Err(_) => false,
+    };
 
-    info!("Login submit action: {}", clicked_result);
+    if !cdp_click_res {
+        let submit_js = r#"
+            (() => {
+                // 1. Check strictly within .login-dialog or modal
+                const dialog = document.querySelector('.login-dialog, app-login, .modal-dialog, div[role="dialog"]');
+                if (dialog) {
+                    let btn = dialog.querySelector('button[type="submit"], button.btn-action.btn-login, button.btn-login');
+                    if (!btn) {
+                        const buttons = Array.from(dialog.querySelectorAll('button'));
+                        btn = buttons.find(b => {
+                            const t = (b.innerText || '').trim().toUpperCase();
+                            return (t === 'LOGIN' || t === 'SIGN IN' || t === 'SIGN-IN') && !b.classList.contains('close-btn');
+                        });
+                    }
+                    if (btn) {
+                        if (btn.disabled) {
+                            btn.disabled = false;
+                            btn.removeAttribute('disabled');
+                        }
+                        btn.click();
+                        return 'CLICKED_DIALOG_BTN: ' + (btn.className || '') + ' (' + (btn.innerText || '').trim() + ')';
+                    }
+                }
 
-    if clicked_result.starts_with("NOT_FOUND") {
-        // Fallback to selector
-        let _ = click_element(page, selectors::login::LOGIN_BUTTON).await;
+                // 2. Direct unique class for beta site submit button
+                const directBtn = document.querySelector('button.btn-action.btn-login');
+                if (directBtn) {
+                    if (directBtn.disabled) {
+                        directBtn.disabled = false;
+                        directBtn.removeAttribute('disabled');
+                    }
+                    directBtn.click();
+                    return 'CLICKED_DIRECT_BTN: ' + (directBtn.className || '') + ' (' + (directBtn.innerText || '').trim() + ')';
+                }
+
+                return 'NOT_FOUND';
+            })()
+        "#;
+
+        let clicked_result = page
+            .evaluate(submit_js)
+            .await
+            .ok()
+            .and_then(|v| v.into_value::<String>().ok())
+            .unwrap_or_else(|| "ERROR".to_string());
+
+        info!("Login submit action: {}", clicked_result);
+
+        if clicked_result.starts_with("NOT_FOUND") {
+            // Fallback to selector
+            let _ = click_element(page, selectors::login::LOGIN_BUTTON).await;
+        }
     }
 
     // Wait for login to complete (IRCTC standard login does not require OTP)
@@ -209,14 +254,17 @@ async fn wait_for_login_complete(page: &Page, timeout: Duration) -> Result<()> {
     let start = std::time::Instant::now();
     let mut otp_prompted = false;
     let mut last_log = std::time::Instant::now();
+    let mut last_error_log = std::time::Instant::now() - Duration::from_secs(10);
 
     loop {
         // Check page state
         let check_js = r#"
             (() => {
-                // 1. Check for logged-in menu element or logout icon in header
-                const profile = document.querySelector('a.logoutText, span.user-name, a.dropdown-toggle.profile, .fa-sign-out');
-                if (profile) return 'LOGGED_IN:profile_element';
+                // 1. Check for logged-in user element or logout icon in header
+                const profile = document.querySelector('.nav-link-1, a.logoutText, span.user-name, a.dropdown-toggle.profile, .fa-sign-out');
+                if (profile && profile.innerText && profile.innerText.trim().length > 0) {
+                    return 'LOGGED_IN:profile_' + profile.innerText.trim();
+                }
 
                 // Check for any link or button containing "Logout"
                 const elements = Array.from(document.querySelectorAll('a, button, span, strong'));
@@ -243,12 +291,12 @@ async fn wait_for_login_complete(page: &Page, timeout: Duration) -> Result<()> {
                 } catch (e) {}
 
                 // Check if login dialog/modal is closed and login button is gone from header
-                const modal = document.querySelector('app-login, .modal-dialog, p-dialog, div[role="dialog"]');
+                const modal = document.querySelector('.login-dialog, div[role="dialog"], .modal-dialog, app-login');
                 const modalVisible = modal && modal.offsetParent !== null && window.getComputedStyle(modal).display !== 'none';
-                const loginBtn = document.querySelector('a.loginText');
+                const loginBtn = document.querySelector('button.btn-login:not([type="submit"]), a.loginText');
                 const loginBtnVisible = loginBtn && loginBtn.offsetParent !== null && window.getComputedStyle(loginBtn).display !== 'none';
 
-                if (!modalVisible && !loginLinkVisible && window.location.href.includes('train-search')) {
+                if (!modalVisible && !loginBtnVisible && window.location.href.includes('train-search')) {
                     return 'LOGGED_IN:modal_closed';
                 }
 
@@ -281,7 +329,11 @@ async fn wait_for_login_complete(page: &Page, timeout: Duration) -> Result<()> {
             info!("Login state: {}", state);
             return Ok(());
         } else if let Some(error_msg) = state.strip_prefix("ERROR:") {
-            return Err(anyhow::anyhow!("Login failed: {}", error_msg));
+            if last_error_log.elapsed() > Duration::from_secs(5) {
+                warn!("⚠️  Login notification from IRCTC: {error_msg}");
+                info!("   You can complete login or click LOGIN in the visible Chrome window if needed...");
+                last_error_log = std::time::Instant::now();
+            }
         } else if state == "WAITING_OTP" {
             if !otp_prompted {
                 info!("⚠️  OTP verification requested by IRCTC. Please enter the OTP in the Chrome window.");

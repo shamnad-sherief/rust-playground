@@ -6,12 +6,14 @@
 /// breaks, check and update these selectors first.
 
 pub mod login {
-    /// Username text input on the login page
-    pub const USERNAME_INPUT: &str = "input[formcontrolname='userid']";
-    /// Password text input on the login page
-    pub const PASSWORD_INPUT: &str = "input[formcontrolname='password']";
+    /// Login trigger button / link to open modal dialog
+    pub const LOGIN_TRIGGER: &str = "button.btn-login, a.loginText, button[aria-label*='Login'], a[aria-label*='Login']";
+    /// Username text input on the login page / dialog
+    pub const USERNAME_INPUT: &str = "input#username, input[formcontrolname='userid']";
+    /// Password text input on the login page / dialog
+    pub const PASSWORD_INPUT: &str = "input#password, input[formcontrolname='password']";
     /// The main login submit button
-    pub const LOGIN_BUTTON: &str = "button[type='submit']";
+    pub const LOGIN_BUTTON: &str = ".login-dialog button[type='submit'], button.btn-action.btn-login[type='submit'], button.btn-action.btn-login, app-login button[type='submit']";
     /// CAPTCHA image element (may not always be present)
     pub const CAPTCHA_IMAGE: &str = "img.captcha-img, img[src*='captcha'], .captcha-img, app-captcha";
     /// CAPTCHA text input
@@ -20,37 +22,45 @@ pub mod login {
     pub const OTP_INPUT: &str = "input#otp";
     /// OTP submit button
     pub const OTP_SUBMIT: &str = "button.btn.btn-primary";
-    /// Element that indicates successful login (e.g., user menu)
-    pub const LOGGED_IN_INDICATOR: &str = "a.loginText";
+    /// Element that indicates successful login (e.g., username badge, user menu, logout)
+    pub const LOGGED_IN_INDICATOR: &str = ".nav-link-1, a.logoutText, span.user-name, a.dropdown-toggle.profile, a.loginText";
+    /// Login modal container
+    pub const MODAL_CONTAINER: &str = "p-dialog#newLogin, .login-dialog, app-login, .modal-dialog";
     /// Login page URL fragment
     pub const LOGIN_URL: &str = "/eticket/train-search";
 }
 
 pub mod search {
+    /// "From" station combobox trigger (beta site)
+    pub const FROM_STATION_COMBOBOX: &str = "[role='combobox'][aria-label='From station'], [aria-label*='From' i]";
     /// "From" station autocomplete input
-    pub const FROM_STATION_INPUT: &str = "input[aria-label='From']";
+    pub const FROM_STATION_INPUT: &str = "input.from-search-input, input[formcontrolname='origin'], input[aria-label='From']";
+    /// "To" station combobox trigger (beta site)
+    pub const TO_STATION_COMBOBOX: &str = "[role='combobox'][aria-label='To station'], [aria-label*='To' i]";
     /// "To" station autocomplete input
-    pub const TO_STATION_INPUT: &str = "input[aria-label='To']";
+    pub const TO_STATION_INPUT: &str = "input.to-search-input, input[formcontrolname='destination'], input[aria-label='To']";
     /// Autocomplete dropdown suggestion items
-    pub const AUTOCOMPLETE_OPTION: &str = "span.ui-autocomplete-list-item";
-    /// Journey date picker input
-    pub const DATE_INPUT: &str = "input[formcontrolname='journeyDate']";
+    pub const AUTOCOMPLETE_OPTION: &str = "div[role='option'].custom-option, .custom-dropdown-panel .custom-option, span.ui-autocomplete-list-item";
+    /// Journey date picker input or button
+    pub const DATE_INPUT: &str = "[role='button'][aria-label='Select travel date'], input[formcontrolname='journeyDate'], p-calendar input";
     /// Class selection dropdown
     pub const CLASS_DROPDOWN: &str = "select#journeyClass";
-    /// Quota selection dropdown
-    pub const QUOTA_DROPDOWN: &str = "select#journeyQuota";
+    /// Quota selection combobox or dropdown
+    pub const QUOTA_DROPDOWN: &str = "[role='combobox'][aria-label='Quota'], select#journeyQuota";
+    /// Quota option items
+    pub const QUOTA_OPTION: &str = "div[role='option'].custom-option, .custom-dropdown-panel .custom-option";
     /// "Find Trains" / search button
-    pub const SEARCH_BUTTON: &str = "button.search_btn";
+    pub const SEARCH_BUTTON: &str = "button.search-btn, button.search_btn, button[type='submit'].search-btn";
     /// Train list container (appears after search)
-    pub const TRAIN_LIST_CONTAINER: &str = "div.train-list";
+    pub const TRAIN_LIST_CONTAINER: &str = "div.train-list, div.train-list-container";
     /// Individual train row in results
-    pub const TRAIN_ROW: &str = "app-train-avl-enq";
+    pub const TRAIN_ROW: &str = "app-train-avl-enq, .train-card";
     /// Train number text within a row
-    pub const TRAIN_NUMBER: &str = "strong.train-heading";
+    pub const TRAIN_NUMBER: &str = "strong.train-heading, strong, span.train-number";
     /// Availability link/button for a specific class in a train row
-    pub const AVAILABILITY_LINK: &str = "td.pre-avl";
+    pub const AVAILABILITY_LINK: &str = "button.btn-availability, td.pre-avl, .class-card, span.date-badge";
     /// "Book Now" button (appears after clicking availability)
-    pub const BOOK_NOW_BUTTON: &str = "button.btnDefault.train_Search";
+    pub const BOOK_NOW_BUTTON: &str = "button.btn-book, button.btn-action.btn-book, button.btnDefault.train_Search, button.search-btn";
 }
 
 pub mod booking {
