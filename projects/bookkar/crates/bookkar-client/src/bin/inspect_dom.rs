@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::time::Duration;
 use anyhow::Result;
 use bookkar_client::browser::launcher::{launch_stealth_browser, STEALTH_JS};
@@ -171,8 +172,17 @@ async fn main() -> Result<()> {
     let res = page.evaluate(check_suggestions_js).await?;
     println!("Suggestions:\n{}", res.into_value::<String>().unwrap_or_default());
 
-    // Click Login Trigger
-    println!("\n=== TESTING LOGIN FLOW ON NEW BETA SITE ===");
+    // ── LOGIN FLOW ─────────────────────────────────────────────────────────────
+    println!("\n=== LOGIN FLOW ===");
+    println!("\n╔══════════════════════════════════════════════════════════════╗");
+    println!(  "║  CHROME WINDOW OPENED — PLEASE LOOK AT YOUR SCREEN          ║");
+    println!(  "║  The automation will fill your credentials and click LOGIN.  ║");
+    println!(  "║  If a CAPTCHA appears, solve it in the Chrome window.        ║");
+    println!(  "║  If OTP is requested, enter it in the Chrome window.         ║");
+    println!(  "║  The program will wait up to 5 minutes for login.            ║");
+    println!(  "╚══════════════════════════════════════════════════════════════╝\n");
+
+    // Click login trigger
     let click_login_js = r#"
         (() => {
             const btn = document.querySelector('button.btn-login, a.loginText, button[aria-label*="Login"]');
@@ -188,7 +198,8 @@ async fn main() -> Result<()> {
     let username = std::env::var("IRCTC_USERNAME").unwrap_or_default();
     let password = std::env::var("IRCTC_PASSWORD").unwrap_or_default();
 
-    println!("Filling username and password for user '{}'...", username);
+    // Fill credentials via JS (Angular-compatible native value setter)
+    println!("Filling credentials for '{}'...", username);
     let fill_creds_js = format!(
         r#"
         (() => {{
@@ -197,7 +208,6 @@ async fn main() -> Result<()> {
             if (!uInput || !pInput) {{
                 return 'INPUTS_NOT_FOUND: u=' + !!uInput + ', p=' + !!pInput;
             }}
-
             const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
             if (nativeSetter) {{
                 nativeSetter.call(uInput, {});
@@ -206,15 +216,12 @@ async fn main() -> Result<()> {
                 uInput.value = {};
                 pInput.value = {};
             }}
-
             uInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
             uInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
             uInput.dispatchEvent(new Event('blur', {{ bubbles: true }}));
-
             pInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
             pInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
             pInput.dispatchEvent(new Event('blur', {{ bubbles: true }}));
-
             return 'FILLED';
         }})()
         "#,
@@ -223,10 +230,9 @@ async fn main() -> Result<()> {
         serde_json::to_string(&username)?,
         serde_json::to_string(&password)?
     );
-
     let res = page.evaluate(fill_creds_js.as_str()).await?;
-    println!("Fill result: {}", res.into_value::<String>().unwrap_or_default());
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    println!("Credential fill: {}", res.into_value::<String>().unwrap_or_default());
+    tokio::time::sleep(Duration::from_millis(600)).await;
 
     // Check submit button state in dialog
     let check_submit_js = r#"
@@ -246,6 +252,60 @@ async fn main() -> Result<()> {
     "#;
     let res = page.evaluate(check_submit_js).await?;
     println!("Submit button state before click:\n{}", res.into_value::<String>().unwrap_or_default());
+
+    // ── ACTUALLY SUBMIT LOGIN ─────────────────────────────────────────────────
+    println!("\n=== SUBMITTING LOGIN ===");
+    let click_submit_js = r#"
+        (() => {
+            const modal = document.querySelector('#newLogin, .login-dialog, app-login, div[role="dialog"]');
+            const container = modal || document;
+            const btn = container.querySelector('button.btn-action.btn-login, button[type="submit"].btn-login, button[type="submit"]');
+            if (btn) {
+                if (btn.disabled) { btn.disabled = false; btn.removeAttribute('disabled'); }
+                btn.click();
+                return 'SUBMIT_CLICKED: ' + btn.className + ' | ' + btn.innerText.trim();
+            }
+            // Fallback: any visible LOGIN button in the page
+            const all = Array.from(document.querySelectorAll('button')).filter(b =>
+                b.offsetParent !== null && (b.innerText || '').trim().toUpperCase() === 'LOGIN'
+            );
+            if (all.length > 0) { all[all.length - 1].click(); return 'FALLBACK_CLICKED'; }
+            return 'NOT_FOUND';
+        })()
+    "#;
+    let submit_res = page.evaluate(click_submit_js).await?;
+    println!("Submit click result: {}", submit_res.into_value::<String>().unwrap_or_default());
+
+    // Wait for login to complete (up to 5 minutes — user may need to enter OTP/CAPTCHA)
+    println!("⏳ Waiting for login (up to 5 min) — handle CAPTCHA/OTP in the Chrome window if prompted...");
+    let _ = std::io::stdout().flush();
+    let login_start = std::time::Instant::now();
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let state_js = r#"
+            (() => {
+                // Check for logout link / user name badge
+                const logout = Array.from(document.querySelectorAll('a, button, span, strong'))
+                    .find(el => (el.innerText || '').trim().toUpperCase().includes('LOGOUT'));
+                if (logout) return 'LOGGED_IN:logout_found';
+                if (sessionStorage.getItem('token') || sessionStorage.getItem('userName') || sessionStorage.getItem('userId'))
+                    return 'LOGGED_IN:storage';
+                const modal = document.querySelector('.login-dialog, div[role="dialog"], app-login');
+                const modalVisible = modal && modal.offsetParent !== null;
+                if (!modalVisible && window.location.href.includes('train-search')) return 'LOGGED_IN:modal_closed';
+                return 'WAITING';
+            })()
+        "#;
+        let state = page.evaluate(state_js).await?;
+        let state_str = state.into_value::<String>().unwrap_or_default();
+        println!("Login state: {}", state_str);
+        if state_str.starts_with("LOGGED_IN") { println!("✅ Logged in!"); break; }
+        if login_start.elapsed() > Duration::from_secs(300) {
+            println!("⚠️  Login timed out after 5 minutes — proceeding anyway");
+            break;
+        }
+    }
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // Now let's test Station Selection and Search Trains
     println!("\n=== TESTING SEARCH TRAINS ON NEW BETA SITE ===");
@@ -456,9 +516,72 @@ async fn main() -> Result<()> {
     "#;
     println!("After waiting 5 seconds for availability:\n{}", page.evaluate(check_book_now_js).await?.into_value::<String>().unwrap_or_default());
 
+    // ── CLICK BOOK NOW ────────────────────────────────────────────────────────
+    println!("\n=== CLICKING BOOK NOW ===");
+    let click_book_js = r#"
+        (() => {
+            // Try within the train card first
+            const card = document.querySelector('app-train-avl-enq');
+            const container = card || document;
+            const allBtns = Array.from(container.querySelectorAll('button, .btn, [role="button"], a.btn, .btnDefault'));
+            const bookBtn = allBtns.find(b => {
+                const t = (b.innerText || '').trim().toUpperCase();
+                return t === 'BOOK NOW' || t === 'BOOK' || t.includes('BOOK NOW');
+            });
+            if (bookBtn) { bookBtn.click(); return 'CLICKED: ' + bookBtn.className + ' | ' + bookBtn.innerText.trim(); }
+            return 'BOOK_BTN_NOT_FOUND — available buttons: ' + allBtns.map(b => b.innerText.trim().substring(0,20)).join(' | ');
+        })()
+    "#;
+    println!("{}", page.evaluate(click_book_js).await?.into_value::<String>().unwrap_or_default());
 
-    println!("\nDone! Closing browser in 3 seconds...");
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    println!("Waiting 5 seconds for booking form to load...");
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    // ── INSPECT BOOKING FORM ──────────────────────────────────────────────────
+    println!("\n=== BOOKING FORM DOM INSPECTION ===");
+    let inspect_booking_js = r#"
+        (() => {
+            const url = window.location.href;
+            const allInputs = Array.from(document.querySelectorAll('input, select, textarea'))
+                .map(el => ({
+                    tag: el.tagName.toLowerCase(),
+                    id: el.id || null,
+                    cls: el.className || null,
+                    fc: el.getAttribute('formcontrolname'),
+                    ph: el.placeholder || null,
+                    type: el.type || null,
+                    name: el.name || null,
+                    ariaLabel: el.getAttribute('aria-label') || null,
+                    visible: el.offsetParent !== null
+                }))
+                .filter(el => el.visible);
+
+            const allButtons = Array.from(document.querySelectorAll('button'))
+                .filter(b => b.offsetParent !== null)
+                .map(b => ({
+                    cls: b.className,
+                    text: b.innerText.trim().substring(0, 60),
+                    type: b.type,
+                    id: b.id
+                }));
+
+            const passengerForm = document.querySelector('app-passenger-details, app-pax-details, .pax-details, [class*="passenger"]');
+            const paymentSection = document.querySelector('.payment-options, .pay-section, .bank-type, [class*="payment"]');
+
+            return JSON.stringify({
+                url,
+                allInputs,
+                allButtons: allButtons.slice(0, 30),
+                passengerFormTag: passengerForm ? passengerForm.tagName + '.' + passengerForm.className.split(' ')[0] : null,
+                paymentSectionTag: paymentSection ? paymentSection.tagName + '.' + paymentSection.className.split(' ')[0] : null,
+            }, null, 2);
+        })()
+    "#;
+    println!("Booking form:\n{}", page.evaluate(inspect_booking_js).await?.into_value::<String>().unwrap_or_default());
+
+    println!("\nDone! Closing browser in 5 seconds...");
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     Ok(())
 }
+
