@@ -6,9 +6,10 @@ use bookkar_common::{Quota, TrainClass};
 use tracing::{debug, info};
 
 use crate::browser::page_state::{
-    click_element, eval_js, js_quote, wait_for_element,
+    call_js, click_element, eval_js, js_quote, wait_for_element,
 };
 use crate::irctc::selectors;
+use serde_json::json;
 
 /// Fill the train search form with journey details.
 ///
@@ -147,6 +148,56 @@ pub async fn fill_search_form(
     Ok(())
 }
 
+/// Open the station combobox (beta site) and type the station code into its input.
+///
+/// Args: `(label, inputSelector, stationCode)`. Passed via `call_js`, never
+/// spliced into the source, because selectors contain `'` characters.
+const TYPE_STATION_JS: &str = r#"
+function (label, inputSelector, stationCode) {
+    // 1. Beta site: open the combobox. Compare aria-label in JS rather than
+    //    building an attribute selector, so no CSS escaping is needed.
+    const combobox = Array.from(document.querySelectorAll('[role="combobox"]'))
+        .find(el => el.getAttribute('aria-label') === label);
+    if (combobox) {
+        combobox.click();
+    }
+
+    // 2. Find input (new beta input or legacy input)
+    let input = document.querySelector(inputSelector);
+    if (!input) {
+        input = document.querySelector('input.station-search-input, input[placeholder*="search" i], input[type="text"]:focus');
+    }
+    if (input) {
+        input.focus();
+        input.value = stationCode;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return 'TYPED';
+    }
+    return 'INPUT_NOT_FOUND';
+}
+"#;
+
+/// Click the autocomplete suggestion matching the station code (or the first one).
+///
+/// Args: `(optionSelector, stationCode)`.
+const SELECT_STATION_JS: &str = r#"
+function (optionSelector, stationCode) {
+    const options = Array.from(document.querySelectorAll(optionSelector));
+    const codeUpper = stationCode.toUpperCase();
+    const match = options.find(o => (o.innerText || '').toUpperCase().includes(codeUpper));
+    if (match) {
+        match.click();
+        return 'SELECTED_MATCH: ' + match.innerText.trim().replace(/\n+/g, ' ');
+    }
+    if (options.length > 0) {
+        options[0].click();
+        return 'SELECTED_FIRST: ' + options[0].innerText.trim().replace(/\n+/g, ' ');
+    }
+    return 'NO_SUGGESTIONS';
+}
+"#;
+
 /// Fill a station input with autocomplete selection.
 /// Types the station code and selects the matching suggestion.
 async fn fill_station(page: &Page, is_from: bool, station_code: &str) -> Result<()> {
@@ -159,36 +210,12 @@ async fn fill_station(page: &Page, is_from: bool, station_code: &str) -> Result<
 
     debug!("Filling station: label='{}', code='{}'", label, station_code);
 
-    let type_js = format!(
-        r#"
-        (() => {{
-            // 1. Try to find and click combobox on beta site
-            const combobox = document.querySelector('[role="combobox"][aria-label="{}"]');
-            if (combobox) {{
-                combobox.click();
-            }}
-
-            // 2. Find input (new beta input or legacy input)
-            let input = document.querySelector('{}');
-            if (!input) {{
-                input = document.querySelector('input.station-search-input, input[placeholder*="search" i], input[type="text"]:focus');
-            }}
-            if (input) {{
-                input.focus();
-                input.value = {};
-                input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                input.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                return 'TYPED';
-            }}
-            return 'INPUT_NOT_FOUND';
-        }})()
-        "#,
-        label,
-        input_selector,
-        js_quote(station_code)
-    );
-
-    let res = eval_js(page, &type_js).await?;
+    let res = call_js(
+        page,
+        TYPE_STATION_JS,
+        [json!(label), json!(input_selector), json!(station_code)],
+    )
+    .await?;
     if res == "INPUT_NOT_FOUND" {
         if let Ok(el) = wait_for_element(page, input_selector, Duration::from_secs(3)).await {
             let _ = el.type_str(station_code).await;
@@ -198,28 +225,12 @@ async fn fill_station(page: &Page, is_from: bool, station_code: &str) -> Result<
     tokio::time::sleep(Duration::from_millis(800)).await;
 
     // Click matching autocomplete suggestion
-    let select_js = format!(
-        r#"
-        (() => {{
-            const options = Array.from(document.querySelectorAll('{}'));
-            const codeUpper = {}.toUpperCase();
-            const match = options.find(o => (o.innerText || '').toUpperCase().includes(codeUpper));
-            if (match) {{
-                match.click();
-                return 'SELECTED_MATCH: ' + match.innerText.trim().replace(/\n+/g, ' ');
-            }}
-            if (options.length > 0) {{
-                options[0].click();
-                return 'SELECTED_FIRST: ' + options[0].innerText.trim().replace(/\n+/g, ' ');
-            }}
-            return 'NO_SUGGESTIONS';
-        }})()
-        "#,
-        selectors::search::AUTOCOMPLETE_OPTION,
-        js_quote(station_code)
-    );
-
-    let result = eval_js(page, &select_js).await?;
+    let result = call_js(
+        page,
+        SELECT_STATION_JS,
+        [json!(selectors::search::AUTOCOMPLETE_OPTION), json!(station_code)],
+    )
+    .await?;
     debug!("Station selected: {}", result);
 
     Ok(())

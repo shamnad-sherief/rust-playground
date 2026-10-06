@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
+use chromiumoxide::cdp::js_protocol::runtime::{CallArgument, CallFunctionOnParams};
 use chromiumoxide::{Element, Page};
 use tracing::{debug, warn};
 
@@ -101,6 +102,30 @@ pub async fn eval_js(page: &Page, expression: &str) -> Result<String> {
         .evaluate(expression)
         .await?;
 
+    Ok(result.into_value::<String>().unwrap_or_default())
+}
+
+/// Call a JavaScript function in the page, passing `args` as real CDP arguments.
+///
+/// Prefer this over `eval_js(&format!(..))`. The function source is a fixed
+/// string and every argument travels separately as JSON via
+/// `Runtime.callFunctionOn`, so quotes or backslashes inside a selector or user
+/// input can never alter the program's syntax (no escaping step to forget).
+///
+/// `function_declaration` must be a function expression, e.g.
+/// `"function (selector, value) { ... }"`.
+pub async fn call_js(
+    page: &Page,
+    function_declaration: &str,
+    args: impl IntoIterator<Item = serde_json::Value>,
+) -> Result<String> {
+    let params = CallFunctionOnParams::builder()
+        .function_declaration(function_declaration)
+        .arguments(args.into_iter().map(|v| CallArgument::builder().value(v).build()))
+        .build()
+        .map_err(|e| anyhow!("invalid Runtime.callFunctionOn params: {e}"))?;
+
+    let result = page.evaluate_function(params).await?;
     Ok(result.into_value::<String>().unwrap_or_default())
 }
 
