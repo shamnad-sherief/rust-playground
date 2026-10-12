@@ -9,6 +9,7 @@ target/
 /scratch/
 /dumps/
 
-# In-place scratch files (any file prefixed with scratch_ anywhere in the repo)
+# In-place scratch files (Cargo-compatible target names)
 scratch_*
+*_scratch.rs
 *.scratch.*
