@@ -3,3 +3,12 @@ target/
 *.db
 *.db-shm
 *.db-wal
+
+
+# Scratch & dump folder
+/scratch/
+/dumps/
+
+# In-place scratch files (any file prefixed with scratch_ anywhere in the repo)
+scratch_*
+*.scratch.*
