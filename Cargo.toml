@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
 members = [
-    "projects/dsa", "projects/rustainer",
+    "projects/dsa", "projects/rustainer", "projects/grpc-playground",
 ]
 
